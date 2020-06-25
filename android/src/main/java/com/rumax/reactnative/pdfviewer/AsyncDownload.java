@@ -6,8 +6,6 @@ package com.rumax.reactnative.pdfviewer;
  * This source code is licensed under the MIT license
  */
 
-import android.content.Context;
-import android.net.Uri;
 import android.os.AsyncTask;
 
 import com.facebook.react.bridge.ReadableMap;
@@ -26,20 +24,17 @@ import java.net.URL;
 class AsyncDownload extends AsyncTask<Void, Void, Void> {
     public static final String HTTP = "http";
     public static final String HTTPS = "https";
-    public static final String CONTENT = "content";
     private static final int BUFF_SIZE = 8192;
     private static final String PROP_METHOD = "method";
     private static final String PROP_BODY = "body";
     private static final String PROP_HEADERS = "headers";
-    private Context context;
     private final ReadableMap urlProps;
     private TaskCompleted listener;
     private File file;
     private String url;
     private Exception exception;
 
-    AsyncDownload(Context context, String url, File file, ReadableMap urlProps, TaskCompleted listener) {
-        this.context = context;
+    AsyncDownload(String url, File file, ReadableMap urlProps, TaskCompleted listener) {
         this.listener = listener;
         this.file = file;
         this.url = url;
@@ -52,27 +47,28 @@ class AsyncDownload extends AsyncTask<Void, Void, Void> {
         exception = null;
     }
 
-    private InputStream getInputStream() throws IOException {
-        Uri uri = Uri.parse(this.url);
-        if (uri.getScheme().equalsIgnoreCase(CONTENT)) {
-            return context.getContentResolver().openInputStream(uri);
-        }
-
-        URL url = new URL(this.url);
-        String protocol = url.getProtocol();
-        if (!protocol.equalsIgnoreCase(HTTP) && !protocol.equalsIgnoreCase(HTTPS)) {
-            throw new IOException("Protocol \"" + protocol + "\" is not supported");
-        }
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        enrichWithUrlProps(connection);
-        connection.connect();
-        return new BufferedInputStream(connection.getInputStream(), BUFF_SIZE);
-    }
-
     @Override
     protected Void doInBackground(Void... params) {
+        URL url;
+        HttpURLConnection connection;
+
+        try {
+            url = new URL(this.url);
+            String protocol = url.getProtocol();
+            if (!protocol.equalsIgnoreCase(HTTP) && !protocol.equalsIgnoreCase(HTTPS)) {
+                exception = new IOException("Protocol \"" + protocol + "\" is not supported");
+                return null;
+            }
+            connection = (HttpURLConnection) url.openConnection();
+            enrichWithUrlProps(connection);
+            connection.connect();
+        } catch (Exception e) {
+            exception = e;
+            return null;
+        }
+
         try (
-                InputStream input = getInputStream();
+                InputStream input = new BufferedInputStream(connection.getInputStream(), BUFF_SIZE);
                 OutputStream output = new FileOutputStream(file)
         ) {
             int count;
