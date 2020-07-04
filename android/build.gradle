@@ -29,9 +29,6 @@ android {
 }
 
 dependencies {
-    def pdfViewerVersion = safeExtGet('pdfViewer', "2.8.2")
-
     //noinspection GradleDynamicVersion
     implementation "com.facebook.react:react-native:+"
-    implementation "com.github.barteksc:android-pdf-viewer:$pdfViewerVersion"
 }

@@ -6,32 +6,34 @@ package com.rumax.reactnative.pdfviewer;
  * This source code is licensed under the MIT license
  */
 
-import android.content.res.AssetManager;
-import android.util.Base64;
-import android.view.animation.AlphaAnimation;
-import android.view.animation.DecelerateInterpolator;
+import android.annotation.SuppressLint;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.pdf.PdfRenderer;
+import android.os.ParcelFileDescriptor;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
+import android.widget.TextView;
 
 import com.facebook.react.bridge.Arguments;
-import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.uimanager.ThemedReactContext;
 import com.facebook.react.uimanager.events.RCTEventEmitter;
-import com.github.barteksc.pdfviewer.listener.OnErrorListener;
-import com.github.barteksc.pdfviewer.listener.OnLoadCompleteListener;
-import com.github.barteksc.pdfviewer.listener.OnPageChangeListener;
-import com.github.barteksc.pdfviewer.listener.OnPageScrollListener;
 
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class PDFView extends com.github.barteksc.pdfviewer.PDFView implements
-        OnErrorListener,
-        OnPageChangeListener,
-        OnPageScrollListener,
-        OnLoadCompleteListener {
+public class PDFView extends RelativeLayout {
+
     public final static String EVENT_ON_LOAD = "onLoad";
     public final static String EVENT_ON_ERROR = "onError";
     public final static String EVENT_ON_PAGE_CHANGED = "onPageChanged";
@@ -41,57 +43,160 @@ public class PDFView extends com.github.barteksc.pdfviewer.PDFView implements
     private File downloadedFile;
     private AsyncDownload downloadTask = null;
     private String resourceType = null;
-    private Configurator configurator = null;
     private boolean sourceChanged = true;
     private ReadableMap urlProps;
     private int fadeInDuration = 0;
     private boolean enableAnnotations = false;
-    private float lastPositionOffset = 0;
+
+    private ImageView imageViewPdf;
+    private TextView pageNumberTextView;
+    private Button prevPageButton;
+    private Button nextPageButton;
+    private int pageIndex = 0;
+    private PdfRenderer pdfRenderer;
+    private PdfRenderer.Page currentPage;
+    private ParcelFileDescriptor parcelFileDescriptor;
 
     public PDFView(ThemedReactContext context) {
         super(context, null);
         this.context = context;
+
+        init();
     }
 
-    @Override
     public void loadComplete(int numberOfPages) {
-        AlphaAnimation fadeIn = new AlphaAnimation(0, 1);
-        fadeIn.setInterpolator(new DecelerateInterpolator());
-        fadeIn.setDuration(fadeInDuration);
-        this.setAlpha(1);
-        this.startAnimation(fadeIn);
-
         reactNativeMessageEvent(EVENT_ON_LOAD, null);
     }
 
-    @Override
-    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        super.onLayout(changed, left, top, right, bottom);
-        this.setClipToOutline(true);
-    }
-
-    @Override
     public void onError(Throwable t) {
         reactNativeMessageEvent(EVENT_ON_ERROR, "error: " + t.getMessage());
     }
 
-    @Override
-    public void onPageChanged(int page, int pageCount) {
-        WritableMap event = Arguments.createMap();
-        event.putInt("page", page);
-        event.putInt("pageCount", pageCount);
-        reactNativeEvent(EVENT_ON_PAGE_CHANGED, event);
+    @SuppressLint("ResourceType")
+    private void init() {
+        imageViewPdf = new ImageView(context);
+        RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        );
+        addView(imageViewPdf, params);
+
+        LinearLayout toolbar = new LinearLayout(context);
+        toolbar.setBackgroundColor(Color.BLACK);
+        toolbar.getBackground().setAlpha(50);
+
+        prevPageButton = new Button(context);
+        prevPageButton.setText("<");
+        prevPageButton.setTypeface(null, Typeface.BOLD);
+        prevPageButton.setEnabled(false);
+        prevPageButton.setBackgroundColor(Color.TRANSPARENT);
+        prevPageButton.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                pageIndex--;
+                showPage(pageIndex);
+            }
+        });
+        LinearLayout.LayoutParams prevPageButtonParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        prevPageButtonParams.weight = 1;
+        toolbar.addView(prevPageButton, prevPageButtonParams);
+
+        pageNumberTextView = new TextView(context);
+        pageNumberTextView.setTypeface(null, Typeface.BOLD);
+        pageNumberTextView.setTextColor(Color.WHITE);
+        pageNumberTextView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams pageNumberParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        pageNumberParams.weight = 1;
+        toolbar.addView(pageNumberTextView, pageNumberParams);
+
+        nextPageButton = new Button(context);
+        nextPageButton.setText(">");
+        nextPageButton.setTypeface(null, Typeface.BOLD);
+        nextPageButton.setTextColor(Color.WHITE);
+        nextPageButton.setEnabled(false);
+        nextPageButton.setBackgroundColor(Color.TRANSPARENT);
+        nextPageButton.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                pageIndex++;
+                showPage(pageIndex);
+            }
+        });
+        LinearLayout.LayoutParams nextPageButtonParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        nextPageButtonParams.weight = 1;
+        toolbar.addView(nextPageButton, nextPageButtonParams);
+
+        RelativeLayout.LayoutParams toolbarParams = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        toolbarParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, RelativeLayout.TRUE);
+        toolbarParams.addRule(RelativeLayout.CENTER_HORIZONTAL, RelativeLayout.TRUE);
+        addView(toolbar, toolbarParams);
     }
 
-    @Override
-    public void onPageScrolled(int page, float positionOffset) {
-        if (lastPositionOffset != positionOffset && (positionOffset == 0 || positionOffset == 1)) {
-            // Only 0 and 1 are currently supported
-            lastPositionOffset = positionOffset;
-            WritableMap event = Arguments.createMap();
-            event.putDouble("offset", positionOffset);
-            reactNativeEvent(EVENT_ON_SCROLLED, event);
+    private void openRenderer(File file) throws IOException {
+        parcelFileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+        if (parcelFileDescriptor != null) {
+            pdfRenderer = new PdfRenderer(parcelFileDescriptor);
         }
+    }
+
+    private void closeRenderer() throws IOException {
+        if (null != currentPage) {
+            currentPage.close();
+            currentPage = null;
+        }
+        pdfRenderer.close();
+        parcelFileDescriptor.close();
+    }
+
+    private void showPage(int index) {
+        if (index < 0 || pdfRenderer.getPageCount() <= index) {
+            loadComplete(index);
+            return;
+        }
+
+        // Make sure to close the current page before opening another one.
+        if (null != currentPage) {
+            currentPage.close();
+        }
+        // Use `openPage` to open a specific page in PDF.
+        currentPage = pdfRenderer.openPage(index);
+        // Important: the destination bitmap must be ARGB (not RGB).
+        Bitmap bitmap = Bitmap.createBitmap(currentPage.getWidth(), currentPage.getHeight(),
+                Bitmap.Config.ARGB_8888);
+        // Here, we render the page onto the Bitmap.
+        // To render a portion of the page, use the second and third parameter. Pass nulls to get
+        // the default result.
+        // Pass either RENDER_MODE_FOR_DISPLAY or RENDER_MODE_FOR_PRINT for the last parameter.
+        currentPage.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+        // We are ready to show the Bitmap to user.
+        imageViewPdf.setImageBitmap(bitmap);
+        updateUi();
+    }
+
+    private void updateUi() {
+        int index = currentPage.getIndex();
+        int pageCount = pdfRenderer.getPageCount();
+
+        prevPageButton.setEnabled(index > 0);
+        prevPageButton.setTextColor(index > 0 ? Color.WHITE : Color.GRAY);
+        nextPageButton.setEnabled(index < pageCount - 1);
+        nextPageButton.setTextColor(index < pageCount - 1 ? Color.WHITE : Color.GRAY);
+
+        pageNumberTextView.setText((index + 1 ) + " / " + pageCount);
+
+        loadComplete(index);
     }
 
     private void reactNativeMessageEvent(String eventName, String message) {
@@ -101,53 +206,34 @@ public class PDFView extends com.github.barteksc.pdfviewer.PDFView implements
     }
 
     private void reactNativeEvent(String eventName, WritableMap event) {
-        ReactContext reactContext = (ReactContext) this.getContext();
-        reactContext
+        context
                 .getJSModule(RCTEventEmitter.class)
                 .receiveEvent(this.getId(), eventName, event);
     }
 
-    private void setupAndLoad() {
-        lastPositionOffset = 0;
-        this.setAlpha(0);
-        configurator
-                .defaultPage(0)
-                .swipeHorizontal(false)
-                .onLoad(this)
-                .onError(this)
-                .onPageChange(this)
-                .onPageScroll(this)
-                .spacing(10)
-                .enableAnnotationRendering(enableAnnotations)
-                .load();
-        sourceChanged = false;
-    }
-
     private void renderFromFile(String filePath) {
-        InputStream input;
-
         try {
             if (filePath.startsWith("/")) { // absolute path, using FS
-                input = new FileInputStream(new File(filePath));
+                File file = new File(filePath);
+                openRenderer(file);
+                showPage(pageIndex);
             } else { // from assets
-                AssetManager assetManager = context.getAssets();
-                input = assetManager.open(filePath, AssetManager.ACCESS_BUFFER);
-            }
+                InputStream asset = context.getAssets().open(filePath);
+                File file = new File(context.getCacheDir(), filePath);
+                FileOutputStream output = new FileOutputStream(file);
+                final byte[] buffer = new byte[1024];
+                int size;
+                while ((size = asset.read(buffer)) != -1) {
+                    output.write(buffer, 0, size);
+                }
+                asset.close();
+                output.close();
 
-            configurator = this.fromStream(input);
-            setupAndLoad();
+                openRenderer(file);
+                showPage(pageIndex);
+            }
         } catch (IOException e) {
             onError(e);
-        }
-    }
-
-    private void renderFromBase64() {
-        try {
-            byte[] bytes = Base64.decode(resource, 0);
-            configurator = this.fromBytes(bytes);
-            setupAndLoad();
-        } catch (IllegalArgumentException e) {
-            onError(new IOException(Errors.E_INVALID_BASE64.getCode()));
         }
     }
 
@@ -195,9 +281,6 @@ public class PDFView extends com.github.barteksc.pdfviewer.PDFView implements
             case "url":
                 renderFromUrl();
                 break;
-            case "base64":
-                renderFromBase64();
-                break;
             case "file":
                 renderFromFile(resource);
                 break;
@@ -212,6 +295,16 @@ public class PDFView extends com.github.barteksc.pdfviewer.PDFView implements
             downloadTask.cancel(true);
         }
         cleanDownloadedFile();
+
+        if (currentPage != null) {
+            try {
+                closeRenderer();
+            } catch (IOException ex) {
+                // TODO:
+            }
+        }
+
+        pageIndex = 0;
     }
 
     private void cleanDownloadedFile() {
