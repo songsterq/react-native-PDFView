@@ -54,6 +54,8 @@ target 'demo' do
   pod 'glog', :podspec => '../node_modules/react-native/third-party-podspecs/glog.podspec'
   pod 'Folly', :podspec => '../node_modules/react-native/third-party-podspecs/Folly.podspec'
 
+  pod 'RNPDF', :path => '../..'
+
   target 'demoTests' do
     inherit! :complete
     # Pods for testing
